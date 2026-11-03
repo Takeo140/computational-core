@@ -17,13 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install elan (toolchain pinned by lean-toolchain)
+      - name: Install elan
         run: |
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            -sSf | sh -s -- -y --no-modify-path --default-toolchain none
-          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --no-modify-path --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.elan/bin:$PATH"
           elan toolchain install "$(cat lean-toolchain)"
           elan default "$(cat lean-toolchain)"
+          lean --version
 
       - name: Cache elan toolchain
         uses: actions/cache@v4
@@ -31,7 +33,7 @@ jobs:
           path: ~/.elan
           key: elan-${{ hashFiles('lean-toolchain') }}
 
-      - name: Cache Lake build & dependencies
+      - name: Cache Lake build
         uses: actions/cache@v4
         with:
           path: .lake
@@ -43,7 +45,7 @@ jobs:
         run: lake exe cache get
 
       - name: Compile verified Lean files & check no sorry/admit
-        run: bash scripts/verify_lean.sh
+        run: bash script/vianty_lean.sh
 
   verify-cpp:
     name: C++ Verification
@@ -68,8 +70,8 @@ jobs:
               fail=1
             fi
           done < ci/verified_cpp.txt
-          total=$(ls -1 *.cpp | wc -l)
-          count=$(grep -vc -e '^\s*#' -e '^\s*$' ci/verified_cpp.txt)
+          total=$(find . -maxdepth 1 -type f -name '*.cpp' | wc -l)
+          count=$(grep -vc -e '^\s*#' -e '^\s*$' ci/verified_cpp.txt || true)
           echo "coverage: ${count} / ${total} C++ files are syntax-verified"
           exit "$fail"
 
@@ -83,6 +85,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
 
       - name: Run integration tests
         run: python verify_42.py
@@ -102,4 +109,3 @@ jobs:
             exit 1
           fi
           echo "Lean 4 + C++ + Python verification passed successfully."
-
