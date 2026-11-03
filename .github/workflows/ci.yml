@@ -19,7 +19,6 @@ jobs:
 
       - name: Install elan
         run: |
-          # lean-toolchain しかない場合に備えて lean.toolchain にコピーを作る安全策
           if [ -f lean-toolchain ] && [ ! -f lean.toolchain ]; then
             cp lean-toolchain lean.toolchain
           fi
@@ -40,18 +39,19 @@ jobs:
           path: ~/.elan
           key: elan-${{ hashFiles('lean.toolchain', 'lean-toolchain') }}
 
-      - name: Cache Lake build
+      - name: Cache Lake build & Mathlib
         uses: actions/cache@v4
         with:
           path: .lake
-          key: lake-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          key: lake-v4.19.0-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean') }}
           restore-keys: |
-            lake-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean') }}-
+            lake-v4.19.0-
 
       - name: Update dependencies & Fetch Mathlib precompiled cache
         run: |
+          # キャッシュの不整合を防ぐため、存在しない場合は再生成し確実にキャッシュを取得する
           lake update
-          lake exe cache get
+          lake exe cache get || lake exe cache get
 
       - name: Compile verified Lean files
         run: |
