@@ -11,87 +11,68 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Lean 4 formal verification ────────────────────────────────────────────
   verify-lean:
     name: Lean 4 Formal Verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install elan
+      - name: Install elan (toolchain pinned by lean-toolchain)
         run: |
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            -sSf | sh -s -- -y --no-modify-path
+            -sSf | sh -s -- -y --no-modify-path --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
+          elan toolchain install "$(cat lean-toolchain)"
+          elan default "$(cat lean-toolchain)"
 
       - name: Cache elan toolchain
         uses: actions/cache@v4
         with:
           path: ~/.elan
           key: elan-${{ hashFiles('lean-toolchain') }}
-          restore-keys: elan-
 
       - name: Cache Lake build & dependencies
         uses: actions/cache@v4
         with:
-          path: |
-            .lake
-            lean_packages
-          key: lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lakefile.toml') }}-${{ hashFiles('**/*.lean') }}
+          path: .lake
+          key: lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
           restore-keys: |
-            lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lakefile.toml') }}-
+            lake-${{ hashFiles('lean-toolchain', 'lakefile.lean') }}-
 
-      - name: Get Mathlib cache (if applicable)
-        run: |
-          if [ -f "lakefile.lean" ] && grep -q "mathlib" lakefile.lean; then
-            lake exe cache get || true
-          fi
+      - name: Fetch Mathlib precompiled cache
+        run: lake exe cache get
 
-      - name: Build and verify Lean proofs
-        run: lake build
+      - name: Compile verified Lean files & check no sorry/admit
+        run: bash scripts/verify_lean.sh
 
-      - name: Check no sorry
-        run: |
-          if grep -rn "\bsorry\b" --include="*.lean" .; then
-            echo "::error::sorry found — proofs incomplete"
-            exit 1
-          fi
-
-  # ── C++ / CUDA verification ─────────────────────────────────────────────
-  verify-cpp-cuda:
-    name: C++ / CUDA Verification
+  verify-cpp:
+    name: C++ Verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up CMake & Build Environment
-        uses: lukka/get-cmake@latest
-
-      - name: Cache CMake build
-        uses: actions/cache@v4
-        with:
-          path: build
-          key: cmake-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', '**/*.cpp', '**/*.cu', '**/*.h') }}
-          restore-keys: |
-            cmake-${{ runner.os }}-
-
-      - name: Configure and Build (C++ / CUDA)
+      - name: Build and run UHA demo
         run: |
-          if [ -f "CMakeLists.txt" ]; then
-            cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-            cmake --build build -j$(nproc)
-          else
-            echo "No CMakeLists.txt found, skipping C++/CUDA build step."
-          fi
+          g++ -O2 -std=c++20 -o /tmp/UHA_demo UHA_demo.cpp
+          timeout 120 /tmp/UHA_demo
 
-      - name: Run C++ / CUDA Tests
+      - name: Syntax-check verified C++ files
         run: |
-          if [ -d "build" ] && [ -f "build/CTestTestfile.cmake" ]; then
-            cd build
-            ctest --output-on-failure
-          fi
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in ''|\#*) continue ;; esac
+            if g++ -fsyntax-only -std=c++20 "$f"; then
+              echo "PASS $f"
+            else
+              echo "::error::FAIL $f"
+              fail=1
+            fi
+          done < ci/verified_cpp.txt
+          total=$(ls -1 *.cpp | wc -l)
+          count=$(grep -vc -e '^\s*#' -e '^\s*$' ci/verified_cpp.txt)
+          echo "coverage: ${count} / ${total} C++ files are syntax-verified"
+          exit "$fail"
 
-  # ── Python logic verification ─────────────────────────────────────────────
   verify-python:
     name: Python Logic Verification
     runs-on: ubuntu-latest
@@ -102,39 +83,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
 
       - name: Run integration tests
-        run: |
-          if [ -f "verify_42.py" ]; then
-            python verify_42.py
-          elif command -v pytest &> /dev/null; then
-            pytest
-          else
-            echo "No test runner script found (verify_42.py or pytest)."
-          fi
+        run: python verify_42.py
 
-  # ── Final gate: all must pass ────────────────────────────────────────────
   all-verified:
     name: All Verified
-    needs: [verify-lean, verify-cpp-cuda, verify-python]
+    needs: [verify-lean, verify-cpp, verify-python]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
           if [[ "${{ needs.verify-lean.result }}" != "success" || \
-                "${{ needs.verify-cpp-cuda.result }}" != "success" || \
+                "${{ needs.verify-cpp.result }}" != "success" || \
                 "${{ needs.verify-python.result }}" != "success" ]]; then
             echo "::error::One or more verification jobs failed"
             exit 1
           fi
-          echo "Lean 4 + C++/CUDA + Python verification passed successfully."
+          echo "Lean 4 + C++ + Python verification passed successfully."
 
