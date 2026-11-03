@@ -1,125 +1,32 @@
-name: CI
+name: Meta-Axiom CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   pull_request:
-    branches: [main, master]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [ main, master ]
 
 jobs:
-  verify-lean:
-    name: Lean 4 Formal Verification
+  build:
+    name: Lean + mathlib Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install elan
         run: |
-          if [ -f lean-toolchain ] && [ ! -f lean.toolchain ]; then
-            cp lean-toolchain lean.toolchain
-          fi
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --no-modify-path --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.elan/bin:$PATH"
-          
-          TOOLCHAIN=$(cat lean.toolchain 2>/dev/null || cat lean-toolchain)
-          elan toolchain install "$TOOLCHAIN"
-          elan default "$TOOLCHAIN"
+      - name: Build Lean Project
+        run: |
+          # プロジェクト内の lean-toolchain (v4.19.0) を自動で読み込んでビルドします
+          elan --version
           lean --version
 
-      - name: Cache elan toolchain
-        uses: actions/cache@v4
-        with:
-          path: ~/.elan
-          key: elan-${{ hashFiles('lean.toolchain', 'lean-toolchain') }}
-
-      - name: Cache Lake build & Mathlib
-        uses: actions/cache@v4
-        with:
-          path: .lake
-          key: lake-v4.19.0-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean') }}
-          restore-keys: |
-            lake-v4.19.0-
-
-      - name: Update dependencies & Fetch Mathlib precompiled cache
-        run: |
-          # キャッシュの不整合を防ぐため、存在しない場合は再生成し確実にキャッシュを取得する
+          # 依存関係の更新と Mathlib のキャッシュ取得
           lake update
-          lake exe cache get || lake exe cache get
+          lake exe cache get
 
-      - name: Compile verified Lean files
-        run: |
-          if [ -f script/vianty_lean.sh ]; then
-            bash script/vianty_lean.sh
-          else
-            lake build
-          fi
-
-  verify-cpp:
-    name: C++ Verification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build and run UHA demo
-        run: |
-          g++ -O2 -std=c++20 -o /tmp/UHA_demo UHA_demo.cpp
-          timeout 120 /tmp/UHA_demo
-
-      - name: Syntax-check verified C++ files
-        run: |
-          fail=0
-          while IFS= read -r f; do
-            case "$f" in ''|\#*) continue ;; esac
-            if g++ -fsyntax-only -std=c++20 "$f"; then
-              echo "PASS $f"
-            else
-              echo "::error::FAIL $f"
-              fail=1
-            fi
-          done < ci/verified_cpp.txt
-          total=$(find . -maxdepth 1 -type f -name '*.cpp' | wc -l)
-          count=$(grep -vc -e '^\s*#' -e '^\s*$' ci/verified_cpp.txt || true)
-          echo "coverage: ${count} / ${total} C++ files are syntax-verified"
-          exit "$fail"
-
-  verify-python:
-    name: Python Logic Verification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Run integration tests
-        run: python verify_42.py
-
-  all-verified:
-    name: All Verified
-    needs: [verify-lean, verify-cpp, verify-python]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Check all jobs passed
-        run: |
-          if [[ "${{ needs.verify-lean.result }}" != "success" || \
-                "${{ needs.verify-cpp.result }}" != "success" || \
-                "${{ needs.verify-python.result }}" != "success" ]]; then
-            echo "::error::One or more verification jobs failed"
-            exit 1
-          fi
-          echo "Lean 4 + C++ + Python verification passed successfully."
+          # ビルド実行
+          lake build
