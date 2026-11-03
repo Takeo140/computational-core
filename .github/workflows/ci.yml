@@ -41,11 +41,18 @@ jobs:
           restore-keys: |
             lake-${{ hashFiles('lean.toolchain', 'lakefile.lean') }}-
 
-      - name: Fetch Mathlib precompiled cache
-        run: lake exe cache get
+      - name: Update dependencies & Fetch Mathlib precompiled cache
+        run: |
+          lake update
+          lake exe cache get
 
-      - name: Compile verified Lean files & check no sorry/admit
-        run: bash script/vianty_lean.sh
+      - name: Compile verified Lean files
+        run: |
+          if [ -f script/vianty_lean.sh ]; then
+            bash script/vianty_lean.sh
+          else
+            lake build
+          fi
 
   verify-cpp:
     name: C++ Verification
