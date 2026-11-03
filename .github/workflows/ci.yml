@@ -19,27 +19,34 @@ jobs:
 
       - name: Install elan
         run: |
+          # lean-toolchain しかない場合に備えて lean.toolchain にコピーを作る安全策
+          if [ -f lean-toolchain ] && [ ! -f lean.toolchain ]; then
+            cp lean-toolchain lean.toolchain
+          fi
+
           curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --no-modify-path --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.elan/bin:$PATH"
-          elan toolchain install "$(cat lean.toolchain)"
-          elan default "$(cat lean.toolchain)"
+          
+          TOOLCHAIN=$(cat lean.toolchain 2>/dev/null || cat lean-toolchain)
+          elan toolchain install "$TOOLCHAIN"
+          elan default "$TOOLCHAIN"
           lean --version
 
       - name: Cache elan toolchain
         uses: actions/cache@v4
         with:
           path: ~/.elan
-          key: elan-${{ hashFiles('lean.toolchain') }}
+          key: elan-${{ hashFiles('lean.toolchain', 'lean-toolchain') }}
 
       - name: Cache Lake build
         uses: actions/cache@v4
         with:
           path: .lake
-          key: lake-${{ hashFiles('lean.toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          key: lake-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
           restore-keys: |
-            lake-${{ hashFiles('lean.toolchain', 'lakefile.lean') }}-
+            lake-${{ hashFiles('lean.toolchain', 'lean-toolchain', 'lakefile.lean') }}-
 
       - name: Update dependencies & Fetch Mathlib precompiled cache
         run: |
