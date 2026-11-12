@@ -13,7 +13,7 @@
 
 import Mathlib
 
-/-! ## 0. 基本定義 -/
+/-## 0. 基本定義 -/
 
 abbrev U64 := ZMod (2 ^ 64)
 
